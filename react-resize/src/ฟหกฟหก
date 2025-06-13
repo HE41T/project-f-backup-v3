@@ -1,0 +1,18 @@
+  const toggleShowOriginal = () => {
+    setShowOriginal(!showOriginal);
+    
+    if (showOriginal) {
+      // Switching to show processed/resized version
+      if (processedFile) {
+        setFile(processedFile);
+        setFileSizeKB(processedFileSizeKB);
+      } else if (resizedFile) {
+        setFile(resizedFile);
+        setFileSizeKB(calculateFileSizeKB(resizedFile));
+      }
+    } else {
+      // Switching back to show original version
+      // setFile(originalFile);
+      setFileSizeKB(originalFileSizeKB);
+    }
+  };
