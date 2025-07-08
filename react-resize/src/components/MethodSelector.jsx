@@ -14,9 +14,9 @@ const MethodSelector = ({ method, setMethod, originalFile }) => {
             : 'bg-[#24262B]/50 text-gray-500 cursor-not-allowed'
         }`}
       >
-        <option value="nearest">Nearest Neighbor</option>
-        <option value="bilinear">Bilinear</option>
-        <option value="bicubic">Bicubic</option>
+        <option value="nearest">ความละเอียดต่ำ</option>
+        <option value="bilinear">ความละเอียดปานกลาง</option>
+        <option value="bicubic">ความละเอียดสูง</option>
       </select>
     </div>
   );

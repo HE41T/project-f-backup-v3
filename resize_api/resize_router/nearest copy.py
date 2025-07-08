@@ -334,3 +334,320 @@ async def convert_image(
         
     except Exception as e:
         raise HTTPException(500, detail=f"การแปลงไฟล์ล้มเหลว: {str(e)}")
+
+
+
+
+
+# @router.post("/noise_reduce")
+# async def reduce_noise(
+#     strength: float = Form(0.0, ge=0.0, le=10.0, description="ระดับความแรงในการลด noise")
+# ):
+#     try:
+#         # หาไฟล์ภาพที่แก้ไขล่าสุด
+#         sharpen_files = glob.glob("static/sharpen*")
+#         if sharpen_files:
+#             latest_file = max(sharpen_files, key=os.path.getmtime)
+#         else:
+#             resize_files = glob.glob("static/resize*")
+#             if not resize_files:
+#                 raise HTTPException(404, "ไม่พบไฟล์ภาพ")
+#             latest_file = max(resize_files, key=os.path.getmtime)
+
+#         filename = os.path.basename(latest_file)
+#         extension = os.path.splitext(filename)[1][1:].lower() or 'png'
+
+#         with Image.open(latest_file) as image:
+#             if image.mode == 'P':
+#                 image = image.convert('RGBA')
+
+#             has_alpha = image.mode in ('RGBA', 'LA')
+#             alpha = image.getchannel('A') if has_alpha else None
+#             image = image.convert('RGB')  # NLM ใช้ได้กับ BGR/RGB เท่านั้น
+
+#             img_array = np.array(image)
+#             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+
+#             if strength == 0.0:
+#                 denoised_bgr = img_bgr
+#             else:
+#                 # ปรับพารามิเตอร์ตาม strength
+#                 h = 5 + (strength * 2)  # filtering strength for luminance
+#                 hColor = 4 + strength   # filtering strength for color
+#                 templateWindowSize = 7
+#                 searchWindowSize = 21
+
+#                 denoised_bgr = cv2.fastNlMeansDenoisingColored(
+#                     img_bgr,
+#                     None,
+#                     h=h,
+#                     hColor=hColor,
+#                     templateWindowSize=templateWindowSize,
+#                     searchWindowSize=searchWindowSize
+#                 )
+
+#             denoised_rgb = cv2.cvtColor(denoised_bgr, cv2.COLOR_BGR2RGB)
+#             processed = Image.fromarray(denoised_rgb)
+
+#             if has_alpha and alpha is not None:
+#                 processed = processed.convert('RGBA')
+#                 processed.putalpha(alpha)
+
+#             timestamp = int(time.time())
+#             new_filename = f"noise_nlm_{strength:.1f}_{processed.width}x{processed.height}_{timestamp}.{extension}"
+#             save_path = os.path.join("static", new_filename)
+
+#             save_params = {}
+#             if extension in ['jpg', 'jpeg']:
+#                 save_params['quality'] = 85
+#                 if processed.mode == 'RGBA':
+#                     processed = processed.convert('RGB')
+#             elif extension == 'webp':
+#                 save_params['quality'] = 85
+
+#             processed.save(save_path, **save_params)
+
+#         cleanup_old_files("static", "noise_nlm")
+
+#         return JSONResponse({
+#             "filename": new_filename,
+#             "url": f"/static/{new_filename}",
+#             "extension": extension,
+#             "strength": strength,
+#             "message": f"ลด noise (NLM) ด้วย strength {strength:.1f} สำเร็จ"
+#         })
+
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(500, f"ลด noise ล้มเหลว: {str(e)}")
+
+
+##############################################################################################################
+# @router.post("/enhance_image")
+# async def enhance_image(
+#     noise_reduction: float = Form(0.0, ge=0.0, le=10.0, description="ความแรงของการลด noise (0.0-10.0) - 0=ไม่ลด noise, 1-3=ลดน้อย, 3-5=ลดปานกลาง, 5-10=ลดมาก"),
+#     auto_detect: bool = Form(True, description="ตรวจสอบอัตโนมัติว่าภาพมี noise มากหรือไม่")
+# ):
+#     """
+#     ปรับปรุงภาพโดยรวม: ลด noise และทำให้ภาพเรียบเนียนด้วย Median Filter
+#     - ใช้ Median Filter ทั้งหมดสำหรับการประมวลผล
+#     - ถ้า auto_detect=True: จะวิเคราะห์ภาพและเลือก kernel size ที่เหมาะสม
+#     - ถ้า auto_detect=False: จะใช้ค่าที่ผู้ใช้ระบุใน noise_reduction
+#     - รองรับภาพโปร่งใส (RGBA)
+#     - เหมาะสำหรับทั้งภาพปกติและภาพที่มี noise แบบ salt-and-pepper
+#     """
+#     try:
+#         # หาไฟล์ล่าสุดในโฟลเดอร์ static
+#         source_files = glob.glob("static/resize*") + glob.glob("static/sharpen*")
+#         if not source_files:
+#             raise HTTPException(404, "ไม่พบไฟล์ภาพที่ขึ้นต้นด้วย 'resize' หรือ 'sharpen' ในโฟลเดอร์ static")
+        
+#         latest_file = max(source_files, key=os.path.getmtime)
+#         filename = os.path.basename(latest_file)
+#         extension = os.path.splitext(filename)[1][1:].lower() or 'png'
+
+#         with Image.open(latest_file) as image:
+#             # Convert palette images to RGBA
+#             if image.mode == 'P':
+#                 image = image.convert('RGBA')
+
+#             # จัดการ alpha channel
+#             has_alpha = image.mode in ('RGBA', 'LA')
+#             alpha = None
+            
+#             if has_alpha:
+#                 alpha = image.getchannel('A')
+#                 image = image.convert('RGB')
+
+#             # Convert to numpy array once for processing
+#             img_array = np.array(image)
+
+#             # ตรวจสอบอัตโนมัติว่าภาพมี noise มากหรือไม่ (ถ้าเปิดใช้งาน)
+#             if auto_detect:
+#                 # ใช้การวิเคราะห์ gradient เพื่อประเมิน noise
+#                 gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY) if len(img_array.shape) == 3 else img_array
+                
+#                 # คำนวณค่าเฉลี่ยของ gradient (วัดความหยาบของภาพ)
+#                 sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+#                 sobel_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+#                 gradient_magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
+#                 roughness = np.mean(gradient_magnitude)
+                
+#                 # ปรับ kernel size อัตโนมัติตามระดับ noise
+#                 if roughness > 50:  # มี noise มาก
+#                     kernel_size = 7
+#                     method = "auto_detect_high_noise"
+#                 elif roughness > 30:  # มี noise ปานกลาง
+#                     kernel_size = 5
+#                     method = "auto_detect_medium_noise"
+#                 else:  # มี noise น้อยหรือไม่มี
+#                     kernel_size = 3
+#                     method = "auto_detect_low_noise"
+#             else:
+#                 # คำนวณ kernel size จาก noise_reduction
+#                 base_size = int(noise_reduction * 2)
+#                 kernel_size = max(3, min(11, base_size if base_size % 2 != 0 else base_size + 1))
+#                 method = "manual_setting"
+
+#             # ใช้ median filter จาก OpenCV สำหรับ noise reduction
+#             processed_array = cv2.medianBlur(img_array, kernel_size)
+#             processed = Image.fromarray(processed_array)
+#             action = "noise_reduction"
+
+#             # คืนค่า alpha channel ถ้ามี
+#             if has_alpha and alpha is not None:
+#                 processed = processed.convert('RGBA')
+#                 processed.putalpha(alpha)
+
+#             # บันทึกไฟล์
+#             timestamp = int(time.time())
+#             new_filename = f"enhanced_{noise_reduction:.1f}_{processed.width}x{processed.height}_{timestamp}.{extension}"
+#             save_path = os.path.join("static", new_filename)
+
+#             # ตั้งค่าการบันทึกตามประเภทไฟล์
+#             save_params = {}
+#             if extension in ['jpg', 'jpeg']:
+#                 save_params['quality'] = 85
+#                 if processed.mode == 'RGBA':
+#                     processed = processed.convert('RGB')
+#             elif extension == 'webp':
+#                 save_params['quality'] = 85
+#             elif extension == 'png':
+#                 save_params['compress_level'] = 6
+
+#             processed.save(save_path, **save_params)
+
+#         # ลบไฟล์เก่า
+#         cleanup_old_files("static", "enhanced")
+
+#         return JSONResponse({
+#             "filename": new_filename,
+#             "url": f"/static/{new_filename}",
+#             "extension": extension,
+#             "noise_reduction": noise_reduction,
+#             "kernel_size": kernel_size,
+#             "method": method,
+#             "action": action,
+#             "has_alpha": has_alpha,
+#             "auto_detect": auto_detect,
+#             "message": f"ปรับปรุงภาพสำเร็จ: {action} (kernel size: {kernel_size})"
+#         })
+
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(500, f"การปรับปรุงภาพล้มเหลว: {str(e)}")
+
+# @router.post("/sharpen")
+# async def sharpen_image(
+#     sharpness: float = Form(0.0, ge=-2.0, le=2.0)  # รับค่า sharpness (-2 ถึง 2)
+# ):
+#     """
+#     ปรับความคมชัดของภาพตามค่า sharpness (-2 ถึง 2)
+#     - ค่าลบ = ลดความคมชัด (blur)
+#     - ค่าบวก = เพิ่มความคมชัด (sharpen)
+#     """
+#     try:
+#         # หาไฟล์ล่าสุดในโฟลเดอร์ static ที่ขึ้นต้นด้วย "resize"
+#         resize_files = glob.glob("static/resize*")
+#         if not resize_files:
+#             raise HTTPException(404, "ไม่พบไฟล์ภาพที่ขึ้นต้นด้วย 'resize' ในโฟลเดอร์ static")
+        
+#         latest_file = max(resize_files, key=os.path.getmtime)
+#         filename = os.path.basename(latest_file)
+
+#         # คำนวณพารามิเตอร์จากค่า sharpness
+#         params = calculate_sharpness_params(sharpness)
+
+#         # เปิดภาพจากไฟล์
+#         with Image.open(latest_file) as image:
+#             # ประมวลผลภาพตามค่า sharpness
+#             if params['use_blur']:
+#                 # ลดความคมชัดด้วย Gaussian Blur
+#                 processed = image.filter(ImageFilter.GaussianBlur(radius=params['radius']))
+#             else:
+#                 # เพิ่มความคมชัดด้วย Unsharp Mask
+#                 processed = image.filter(ImageFilter.UnsharpMask(
+#                     radius=params['radius'],
+#                     percent=params['percent'],
+#                     threshold=params['threshold']
+#                 ))
+
+#             # สร้างชื่อไฟล์ใหม่
+#             extension = os.path.splitext(filename)[1][1:] or 'png'
+#             new_filename = f"sharpen_{int(sharpness*10)}_{image.width}x{image.height}.{extension}"
+#             save_path = os.path.join("static", new_filename)
+
+#             # บันทึกภาพที่ประมวลผลแล้ว
+#             processed.save(save_path)
+
+#         cleanup_old_files("static", "sharpen")
+
+#         return JSONResponse({
+#             "filename": new_filename,
+#             "url": f"/static/{new_filename}",
+#             "cache_control": "public, max-age=600, stale-while-revalidate=3600",
+#             "used_extension": extension,
+#             "sharpness": sharpness,
+#             "params": params  # ส่งกลับพารามิเตอร์ที่ใช้สำหรับ debug
+#         })
+
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(500, f"การปรับความคมชัดภาพล้มเหลว: {str(e)}")
+
+# @router.post("/sharpen")
+# async def sharpen_image(
+#     radius: Optional[float] = Form(2.0),
+#     percent: Optional[int] = Form(150),
+#     threshold: Optional[int] = Form(3)
+# ):
+#     """
+#     เพิ่มความคมชัดให้ภาพโดยใช้ UnsharpMask
+#     - ดึงไฟล์ภาพล่าสุดจากโฟลเดอร์ static ที่มีชื่อขึ้นต้นด้วย "resize"
+#     - radius: รัศมีของ filter
+#     - percent: ความแรงของ sharpening (0-500)
+#     - threshold: ความแตกต่างของ pixel ที่จะถูก sharpen
+#     """
+#     try:
+#         # หาไฟล์ล่าสุดในโฟลเดอร์ static ที่ขึ้นต้นด้วย "resize"
+#         resize_files = glob.glob("static/resize*")
+#         if not resize_files:
+#             raise HTTPException(404, "ไม่พบไฟล์ภาพที่ขึ้นต้นด้วย 'resize' ในโฟลเดอร์ static")
+        
+#         # เรียงลำดับไฟล์ตามเวลาที่แก้ไข (ล่าสุดมาก่อน)
+#         latest_file = max(resize_files, key=os.path.getmtime)
+#         filename = os.path.basename(latest_file)
+
+#         # เปิดภาพจากไฟล์
+#         with Image.open(latest_file) as image:
+#             from PIL import ImageFilter
+
+#             # ใช้ UnsharpMask
+#             sharpened = image.filter(ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=threshold))
+
+#             # สร้างชื่อไฟล์ใหม่
+#             extension = os.path.splitext(filename)[1][1:] or 'png'
+#             new_filename = generate_filename("sharpen", image.width, image.height, extension)
+#             save_path = os.path.join("static", new_filename)
+
+#             # บันทึกภาพที่ sharpen แล้ว
+#             sharpened.save(save_path)
+
+#         # ลบไฟล์เก่า ยกเว้นล่าสุด
+#         cleanup_old_files("static", "sharpen")
+
+#         return JSONResponse({
+#             "filename": new_filename,
+#             "url": f"/static/{new_filename}",
+#             "cache_control": "public, max-age=600, stale-while-revalidate=3600",
+#             "used_extension": extension,
+#             "source_image": filename  # เพิ่มข้อมูลไฟล์ต้นทาง
+#         })
+
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(500, f"การ sharpen ภาพล้มเหลว: {str(e)}")

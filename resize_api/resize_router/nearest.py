@@ -5,10 +5,12 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Optional
 import pillow_heif
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, features
 import shutil
 from pathlib import Path
 import glob
+import numpy as np
+import cv2
 
 router = APIRouter()
 
@@ -18,9 +20,6 @@ ALLOWED_CONTENT_TYPES = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
-    "image/tiff": "tiff",
-    "image/bmp": "bmp",
-    "image/x-ms-bmp": "bmp"
 }
 
 # สร้างโฟลเดอร์ static หากไม่มี
@@ -73,11 +72,20 @@ def cleanup_old_files(directory: str, prefix: str, keep_latest: int = 1):
 
 async def validate_image_file(file: UploadFile):
     # ตรวจสอบประเภทไฟล์
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"ประเภทไฟล์ '{file.content_type}' ไม่รองรับ ต้องเป็นหนึ่งใน: {list(ALLOWED_CONTENT_TYPES.keys())}"
-        )
+    content_type = file.content_type
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        # ตรวจสอบจากนามสกุลไฟล์หาก content-type ไม่ตรง
+        file_extension = file.filename.split('.')[-1].lower()
+        if file_extension in ALLOWED_CONTENT_TYPES.values():
+            content_type = f"image/{file_extension}"
+            if file_extension == 'jpg':
+                content_type = 'image/jpeg'
+        
+        if content_type not in ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"ประเภทไฟล์ '{file.content_type}' ไม่รองรับ ต้องเป็นหนึ่งใน: {list(ALLOWED_CONTENT_TYPES.keys())}"
+            )
     
     # ตรวจสอบขนาดไฟล์
     contents = await file.read()
@@ -96,144 +104,195 @@ async def resize_image(
     height: int = Form(...),
     target_format: Optional[str] = Form(None)
 ):
-    """Resize ภาพและแปลงรูปแบบ"""
+    """Resize ภาพและแปลงรูปแบบ (เวอร์ชันรองรับ WebP ทุกประเภท)"""
     try:
-        contents = await validate_image_file(file)
+        contents = await file.read()  # อ่านไฟล์ทั้งหมด
         
-        # กำหนดนามสกุลไฟล์ผลลัพธ์
-        if target_format and target_format.lower() in ALLOWED_CONTENT_TYPES.values():
-            extension = target_format.lower()
-        else:
-            source_extension = ALLOWED_CONTENT_TYPES.get(file.content_type)
-            if not source_extension:
-                raise HTTPException(400, "ไม่สามารถกำหนดนามสกุลไฟล์จากประเภทไฟล์ต้นทาง")
-            extension = source_extension
+        # ตรวจสอบไฟล์ WebP แบบไม่เข้มงวดเกินไป
+        if file.content_type == 'image/webp':
+            if not contents[:4] == b'RIFF' or not contents[8:12] == b'WEBP':
+                print("⚠️ ไฟล์ WebP มีรูปแบบ header ไม่มาตรฐาน แต่จะพยายามประมวลผลต่อไป")
 
-        # เปิดและประมวลผลภาพ
-        with Image.open(BytesIO(contents)) as image:
-            # Resize ภาพ
-            resized = image.resize((width, height), Image.NEAREST)
+        # กำหนดนามสกุลไฟล์ผลลัพธ์
+        extension = target_format.lower() if target_format else ALLOWED_CONTENT_TYPES.get(file.content_type, 'webp')
+
+        # เปิดภาพด้วย Pillow ด้วยการจัดการข้อผิดพลาดเฉพาะ
+        try:
+            image = Image.open(BytesIO(contents))
             
-            # แปลงโหมดสีหากต้องการบันทึกเป็น JPEG หรือ BMP
-            if extension in ['jpg', 'jpeg']:
-                if resized.mode in ('RGBA', 'LA'):
-                    background = Image.new('RGB', resized.size, (255, 255, 255))
-                    background.paste(resized, mask=resized.split()[-1])
-                    resized = background
-                elif resized.mode == 'P':
-                    resized = resized.convert('RGB')
-                elif resized.mode not in ('RGB', 'L'):
-                    resized = resized.convert('RGB')
-            elif extension == 'bmp' and resized.mode == 'RGBA':
-                # BMP ไม่รองรับ RGBA ให้แปลงเป็น RGB
+            # แปลงโหมดสีสำหรับ WebP โดยไม่ขึ้นกับ mode เดิม
+            if image.format == 'WEBP':
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+                elif image.mode == 'LA':
+                    image = image.convert('RGBA')
+                elif image.mode == 'L':
+                    image = image.convert('RGB')
+            
+            image.load()  # บังคับโหลดข้อมูล
+        except Exception as e:
+            raise HTTPException(400, f"ไม่สามารถเปิดไฟล์ภาพได้: {str(e)}")
+
+        # Resize ภาพ
+        resized = image.resize((width, height), Image.NEAREST)
+
+        # จัดการโหมดสีก่อนบันทึก
+        if extension == 'webp':
+            # ไม่บังคับแปลงโหมดสีสำหรับ WebP
+            pass
+        elif extension in ['jpg', 'jpeg']:
+            if resized.mode in ('RGBA', 'LA'):
                 background = Image.new('RGB', resized.size, (255, 255, 255))
                 background.paste(resized, mask=resized.split()[-1])
                 resized = background
+            elif resized.mode not in ('RGB', 'L'):
+                resized = resized.convert('RGB')
 
-            # บันทึกไฟล์
-            filename = generate_filename("resize", width, height, extension)
-            save_path = os.path.join("static", filename)
-            resized.save(save_path)
+        # ตั้งค่าการบันทึกไฟล์
+        filename = generate_filename("resize", width, height, extension)
+        save_path = os.path.join("static", filename)
+        save_params = {}
+
+        # การตั้งค่าเฉพาะสำหรับ WebP
+        if extension == 'webp':
+            save_params.update({
+                'method': 4,
+                'quality': 85,
+                'lossless': False
+            })
+            
+            # ลองบันทึกด้วยวิธีต่างๆ หากวิธีหลักล้มเหลว
+            try:
+                resized.save(save_path, **save_params)
+            except:
+                try:
+                    # ลองบันทึกแบบ RGB หาก RGBA ล้มเหลว
+                    if resized.mode == 'RGBA':
+                        temp_img = resized.convert('RGB')
+                        temp_img.save(save_path, **save_params)
+                    else:
+                        raise
+                except:
+                    # ลองบันทึกแบบไม่มีพารามิเตอร์
+                    resized.save(save_path)
+
+        else:
+            # การตั้งค่าสำหรับรูปแบบอื่น
+            if extension in ['jpg', 'jpeg']:
+                save_params['quality'] = 85
+            resized.save(save_path, **save_params)
 
         cleanup_old_files("static", "resize")
 
         return JSONResponse({
             "filename": filename,
             "url": f"/static/{filename}",
-            "cache_control": "public, max-age=600, stale-while-revalidate=3600",
             "source_extension": ALLOWED_CONTENT_TYPES.get(file.content_type),
-            "used_extension": extension
+            "used_extension": extension,
         })
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"การประมวลผลภาพล้มเหลว: {str(e)}")
+
 
 @router.post("/convert")
 async def convert_image(
     file: UploadFile = File(...),
     target_format: str = Form(...),
     width: Optional[int] = Form(None),
-    height: Optional[int] = Form(None)
+    height: Optional[int] = Form(None),
+    quality: Optional[int] = Form(85)  # เพิ่มพารามิเตอร์คุณภาพ
 ):
     """แปลงรูปแบบไฟล์ภาพ"""
     try:
-        # ตรวจสอบและอ่านไฟล์
-        contents = await validate_image_file(file)
-        
+        contents = await file.read()
+
         # แปลงชื่อรูปแบบ
         format_mapping = {
             'jpg': 'JPEG',
             'jpeg': 'JPEG',
             'png': 'PNG',
             'webp': 'WEBP',
-            'bmp': 'BMP',
-            'tiff': 'TIFF'
         }
-        
+
         target_format = target_format.lower()
         if target_format not in format_mapping:
             raise HTTPException(400, "รูปแบบไฟล์ปลายทางไม่รองรับ")
 
-        # เปิดภาพ
-        image = Image.open(BytesIO(contents))
-        
-        # ปรับขนาดหากระบุ
-        if width and height:
-            image = image.resize((width, height), Image.BILINEAR)
-            
-        # แปลงโหมดสีหากต้องการบันทึกเป็น JPEG
         output_format = format_mapping[target_format]
+
+        # เปิดภาพด้วย Pillow
+        try:
+            image = Image.open(BytesIO(contents))
+            # สำหรับไฟล์ WebP
+            if image.format == 'WEBP' and image.mode == 'P':
+                image = image.convert('RGBA')
+            image.load()
+        except Exception as e:
+            raise HTTPException(400, f"ไม่สามารถเปิดภาพได้: {str(e)}")
+
+        # Resize ถ้ามี
+        if width and height:
+            image = image.resize((width, height), Image.NEAREST)
+
+        # แปลงโหมดสีสำหรับ JPEG
         if output_format == 'JPEG':
             if image.mode in ('RGBA', 'LA'):
                 background = Image.new('RGB', image.size, (255, 255, 255))
                 background.paste(image, mask=image.split()[-1])
                 image = background
-            elif image.mode == 'P':
-                image = image.convert('RGB')
             elif image.mode not in ('RGB', 'L'):
                 image = image.convert('RGB')
-        
-        # สร้างไฟล์ผลลัพธ์
+
+        # สำหรับ WebP ให้ตรวจสอบโหมดสี
+        if output_format == 'WEBP' and image.mode == 'P':
+            image = image.convert('RGBA')
+
+        # Save
         output_buffer = BytesIO()
         save_params = {}
-        
         if output_format in ['JPEG', 'WEBP']:
-            save_params['quality'] = 85
+            save_params['quality'] = quality  # ใช้ค่าคุณภาพที่ผู้ใช้กำหนด
         elif output_format == 'TIFF':
             save_params['compression'] = 'tiff_deflate'
-        
+
+        # สำหรับ WebP สามารถตั้งค่าเพิ่มเติมได้เช่น
+        if output_format == 'WEBP':
+            save_params['method'] = 6  # ค่า default ของ Pillow สำหรับการเข้ารหัส WebP
+
         image.save(output_buffer, format=output_format, **save_params)
         output_buffer.seek(0)
-        
-        # สร้างชื่อไฟล์
+
         extension_map = {
             'JPEG': 'jpg',
             'PNG': 'png',
             'WEBP': 'webp',
-            'BMP': 'bmp',
-            'TIFF': 'tiff'
         }
         extension = extension_map.get(output_format, target_format)
-        
+
         filename = generate_filename("converted", image.width, image.height, extension)
         save_path = os.path.join("static", filename)
-        
-        # บันทึกไฟล์
+
         with open(save_path, 'wb') as f:
             f.write(output_buffer.getvalue())
-        
-        # ลบไฟล์เก่า
+
         cleanup_old_files("static", "converted")
 
         return JSONResponse({
             "filename": filename,
             "url": f"/static/{filename}",
             "format": extension,
+            "quality": quality if output_format in ['JPEG', 'WEBP'] else None,
             "cache_control": "public, max-age=600, stale-while-revalidate=3600",
         })
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"การแปลงไฟล์ล้มเหลว: {str(e)}")
+
 
 @router.post("/sharpen")
 async def sharpen_image(
@@ -337,115 +396,90 @@ async def sharpen_image(
     except Exception as e:
         raise HTTPException(500, f"การปรับความคมชัดภาพล้มเหลว: {str(e)}")
 
-# @router.post("/sharpen")
-# async def sharpen_image(
-#     sharpness: float = Form(0.0, ge=-2.0, le=2.0)  # รับค่า sharpness (-2 ถึง 2)
-# ):
-#     """
-#     ปรับความคมชัดของภาพตามค่า sharpness (-2 ถึง 2)
-#     - ค่าลบ = ลดความคมชัด (blur)
-#     - ค่าบวก = เพิ่มความคมชัด (sharpen)
-#     """
-#     try:
-#         # หาไฟล์ล่าสุดในโฟลเดอร์ static ที่ขึ้นต้นด้วย "resize"
-#         resize_files = glob.glob("static/resize*")
-#         if not resize_files:
-#             raise HTTPException(404, "ไม่พบไฟล์ภาพที่ขึ้นต้นด้วย 'resize' ในโฟลเดอร์ static")
+@router.post("/enhance_image")
+async def enhance_image(
+    noise_reduction: float = Form(0.0, ge=0.0, le=10.0, description="ความแรงของการลด noise (0.0-10.0) - 0=ไม่ลด noise, 1-3=ลดน้อย, 3-5=ลดปานกลาง, 5-10=ลดมาก")
+):
+    """
+    ปรับปรุงภาพโดยรวม: ลด noise และทำให้ภาพเรียบเนียนด้วย Median Filter
+    - ใช้ Median Filter ทั้งหมดสำหรับการประมวลผล
+    - ใช้ค่าที่ผู้ใช้ระบุใน noise_reduction เพื่อกำหนดความแรงของการลด noise
+    - รองรับภาพโปร่งใส (RGBA)
+    - เหมาะสำหรับทั้งภาพปกติและภาพที่มี noise แบบ salt-and-pepper
+    """
+    try:
+        # หาไฟล์ล่าสุดในโฟลเดอร์ static
+        source_files = glob.glob("static/resize*") + glob.glob("static/sharpen*")
+        if not source_files:
+            raise HTTPException(404, "ไม่พบไฟล์ภาพที่ขึ้นต้นด้วย 'resize' หรือ 'sharpen' ในโฟลเดอร์ static")
         
-#         latest_file = max(resize_files, key=os.path.getmtime)
-#         filename = os.path.basename(latest_file)
+        latest_file = max(source_files, key=os.path.getmtime)
+        filename = os.path.basename(latest_file)
+        extension = os.path.splitext(filename)[1][1:].lower() or 'png'
 
-#         # คำนวณพารามิเตอร์จากค่า sharpness
-#         params = calculate_sharpness_params(sharpness)
+        with Image.open(latest_file) as image:
+            # Convert palette images to RGBA
+            if image.mode == 'P':
+                image = image.convert('RGBA')
 
-#         # เปิดภาพจากไฟล์
-#         with Image.open(latest_file) as image:
-#             # ประมวลผลภาพตามค่า sharpness
-#             if params['use_blur']:
-#                 # ลดความคมชัดด้วย Gaussian Blur
-#                 processed = image.filter(ImageFilter.GaussianBlur(radius=params['radius']))
-#             else:
-#                 # เพิ่มความคมชัดด้วย Unsharp Mask
-#                 processed = image.filter(ImageFilter.UnsharpMask(
-#                     radius=params['radius'],
-#                     percent=params['percent'],
-#                     threshold=params['threshold']
-#                 ))
+            # จัดการ alpha channel
+            has_alpha = image.mode in ('RGBA', 'LA')
+            alpha = None
+            
+            if has_alpha:
+                alpha = image.getchannel('A')
+                image = image.convert('RGB')
 
-#             # สร้างชื่อไฟล์ใหม่
-#             extension = os.path.splitext(filename)[1][1:] or 'png'
-#             new_filename = f"sharpen_{int(sharpness*10)}_{image.width}x{image.height}.{extension}"
-#             save_path = os.path.join("static", new_filename)
+            # Convert to numpy array for processing
+            img_array = np.array(image)
 
-#             # บันทึกภาพที่ประมวลผลแล้ว
-#             processed.save(save_path)
+            # คำนวณ kernel size จาก noise_reduction
+            base_size = int(noise_reduction * 2)
+            kernel_size = max(3, min(11, base_size if base_size % 2 != 0 else base_size + 1))
 
-#         cleanup_old_files("static", "sharpen")
+            # ใช้ median filter จาก OpenCV สำหรับ noise reduction
+            processed_array = cv2.medianBlur(img_array, kernel_size)
+            processed = Image.fromarray(processed_array)
+            action = "noise_reduction"
 
-#         return JSONResponse({
-#             "filename": new_filename,
-#             "url": f"/static/{new_filename}",
-#             "cache_control": "public, max-age=600, stale-while-revalidate=3600",
-#             "used_extension": extension,
-#             "sharpness": sharpness,
-#             "params": params  # ส่งกลับพารามิเตอร์ที่ใช้สำหรับ debug
-#         })
+            # คืนค่า alpha channel ถ้ามี
+            if has_alpha and alpha is not None:
+                processed = processed.convert('RGBA')
+                processed.putalpha(alpha)
 
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         raise HTTPException(500, f"การปรับความคมชัดภาพล้มเหลว: {str(e)}")
+            # บันทึกไฟล์
+            timestamp = int(time.time())
+            new_filename = f"enhanced_{noise_reduction:.1f}_{processed.width}x{processed.height}_{timestamp}.{extension}"
+            save_path = os.path.join("static", new_filename)
 
-# @router.post("/sharpen")
-# async def sharpen_image(
-#     radius: Optional[float] = Form(2.0),
-#     percent: Optional[int] = Form(150),
-#     threshold: Optional[int] = Form(3)
-# ):
-#     """
-#     เพิ่มความคมชัดให้ภาพโดยใช้ UnsharpMask
-#     - ดึงไฟล์ภาพล่าสุดจากโฟลเดอร์ static ที่มีชื่อขึ้นต้นด้วย "resize"
-#     - radius: รัศมีของ filter
-#     - percent: ความแรงของ sharpening (0-500)
-#     - threshold: ความแตกต่างของ pixel ที่จะถูก sharpen
-#     """
-#     try:
-#         # หาไฟล์ล่าสุดในโฟลเดอร์ static ที่ขึ้นต้นด้วย "resize"
-#         resize_files = glob.glob("static/resize*")
-#         if not resize_files:
-#             raise HTTPException(404, "ไม่พบไฟล์ภาพที่ขึ้นต้นด้วย 'resize' ในโฟลเดอร์ static")
-        
-#         # เรียงลำดับไฟล์ตามเวลาที่แก้ไข (ล่าสุดมาก่อน)
-#         latest_file = max(resize_files, key=os.path.getmtime)
-#         filename = os.path.basename(latest_file)
+            # ตั้งค่าการบันทึกตามประเภทไฟล์
+            save_params = {}
+            if extension in ['jpg', 'jpeg']:
+                save_params['quality'] = 85
+                if processed.mode == 'RGBA':
+                    processed = processed.convert('RGB')
+            elif extension == 'webp':
+                save_params['quality'] = 85
+            elif extension == 'png':
+                save_params['compress_level'] = 6
 
-#         # เปิดภาพจากไฟล์
-#         with Image.open(latest_file) as image:
-#             from PIL import ImageFilter
+            processed.save(save_path, **save_params)
 
-#             # ใช้ UnsharpMask
-#             sharpened = image.filter(ImageFilter.UnsharpMask(radius=radius, percent=percent, threshold=threshold))
+        # ลบไฟล์เก่า
+        cleanup_old_files("static", "enhanced")
 
-#             # สร้างชื่อไฟล์ใหม่
-#             extension = os.path.splitext(filename)[1][1:] or 'png'
-#             new_filename = generate_filename("sharpen", image.width, image.height, extension)
-#             save_path = os.path.join("static", new_filename)
+        return JSONResponse({
+            "filename": new_filename,
+            "url": f"/static/{new_filename}",
+            "extension": extension,
+            "noise_reduction": noise_reduction,
+            "kernel_size": kernel_size,
+            "action": action,
+            "has_alpha": has_alpha,
+            "message": f"ปรับปรุงภาพสำเร็จ: {action} (kernel size: {kernel_size})"
+        })
 
-#             # บันทึกภาพที่ sharpen แล้ว
-#             sharpened.save(save_path)
-
-#         # ลบไฟล์เก่า ยกเว้นล่าสุด
-#         cleanup_old_files("static", "sharpen")
-
-#         return JSONResponse({
-#             "filename": new_filename,
-#             "url": f"/static/{new_filename}",
-#             "cache_control": "public, max-age=600, stale-while-revalidate=3600",
-#             "used_extension": extension,
-#             "source_image": filename  # เพิ่มข้อมูลไฟล์ต้นทาง
-#         })
-
-#     except HTTPException:
-#         raise
-#     except Exception as e:
-#         raise HTTPException(500, f"การ sharpen ภาพล้มเหลว: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"การปรับปรุงภาพล้มเหลว: {str(e)}")
