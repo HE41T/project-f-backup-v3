@@ -143,6 +143,262 @@ app.post('/authen', jsonParser, function (req, res, next){
 
 })
 
+app.get('/user-logs', jsonParser, function (req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ 
+      status: 'error', 
+      message: 'Unauthorized',
+      redirect: '/login' // เพิ่ม property redirect
+    });
+  }
+
+  jwt.verify(token, secret, function (err, decoded) {
+    if (err) {
+      return res.status(403).json({ 
+        status: 'error', 
+        message: 'Invalid token',
+        redirect: '/login' // เพิ่ม property redirect
+      });
+    }
+
+    connection.execute(
+      'SELECT role FROM users WHERE email = ?',
+      [decoded.email],
+      function (err, users, fields) {
+        if (err || users.length === 0) {
+          return res.status(403).json({ 
+            status: 'error', 
+            message: 'Access denied',
+            redirect: '/login' // เพิ่ม property redirect
+          });
+        }
+
+        const userRole = users[0].role;
+        if (userRole !== 'admin' && userRole !== 'superuser') {
+          return res.status(403).json({ 
+            status: 'error', 
+            message: 'Admin or Superuser access required',
+            redirect: '/login' // เพิ่ม property redirect
+          });
+        }
+
+        connection.execute(
+          `SELECT ul.*, u.firstname, u.lastname, u.email 
+           FROM user_logs ul
+           JOIN users u ON ul.user_id = u.id
+           ORDER BY ul.timestamp DESC
+           LIMIT 100`,
+          function (err, logs, fields) {
+            if (err) {
+              return res.json({ status: 'error', message: err.message });
+            }
+            res.json({ status: 'ok', logs });
+          }
+        );
+      }
+    );
+  });
+});
+
+// ฟังก์ชันตรวจสอบสิทธิ์
+function authorize(roles = []) {
+  return function(req, res, next) {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ status: 'error', message: 'Unauthorized' });
+    }
+
+    jwt.verify(token, secret, function(err, decoded) {
+      if (err) {
+        return res.status(403).json({ status: 'error', message: 'Invalid token' });
+      }
+
+      connection.execute(
+        'SELECT * FROM users WHERE email = ?',
+        [decoded.email],
+        function(err, users) {
+          if (err || users.length === 0) {
+            return res.status(403).json({ status: 'error', message: 'User not found' });
+          }
+
+          const user = users[0];
+          if (roles.length && !roles.includes(user.role)) {
+            return res.status(403).json({ status: 'error', message: 'Insufficient permissions' });
+          }
+
+          req.user = user; // เก็บข้อมูลผู้ใช้ใน request
+          next();
+        }
+      );
+    });
+  };
+}
+
+// เอ็นดพอยต์สำหรับดึงรายการผู้ใช้ทั้งหมด (เฉพาะ admin และ superuser)
+app.get('/users', authorize(['admin', 'superuser']), function(req, res) {
+  connection.execute(
+    'SELECT id, email, firstname, lastname, role, created_at FROM users ORDER BY created_at DESC',
+    function(err, users) {
+      if (err) {
+        return res.json({ status: 'error', message: err.message });
+      }
+      res.json({ status: 'ok', users });
+    }
+  );
+});
+
+// เอ็นดพอยต์สำหรับเปลี่ยน Role (เฉพาะ superuser)
+app.put('/users/:id/role', authorize(['superuser']), jsonParser, function(req, res) {
+  const { id } = req.params;
+  const { role } = req.body;
+
+  if (!['admin', 'user'].includes(role)) {
+    return res.json({ status: 'error', message: 'Invalid role' });
+  }
+
+  connection.execute(
+    'SELECT role FROM users WHERE id = ?',
+    [id],
+    function(err, users) {
+      if (err || users.length === 0) {
+        return res.json({ status: 'error', message: 'User not found' });
+      }
+
+      const userRole = users[0].role;
+      if (userRole === 'superuser') {
+        return res.json({ status: 'error', message: 'Cannot change superuser role' });
+      }
+
+      connection.execute(
+        'UPDATE users SET role = ? WHERE id = ?',
+        [role, id],
+        function(err, result) {
+          if (err) {
+            return res.json({ status: 'error', message: err.message });
+          }
+
+          // บันทึกการเปลี่ยนแปลง Role
+          const now = new Date();
+          connection.execute(
+            'INSERT INTO user_logs (user_id, action, role, timestamp) VALUES (?, ?, ?, ?)',
+            [req.user.id, `change role of user ${id} to ${role}`, req.user.role, now],
+            function(logErr) {
+              if (logErr) console.error('Log error:', logErr);
+            }
+          );
+
+          res.json({ status: 'ok', message: 'Role updated successfully' });
+        }
+      );
+    }
+  );
+});
+
+// เอ็นดพอยต์สำหรับลบผู้ใช้
+app.delete('/users/:id', authorize(['admin', 'superuser']), jsonParser, function(req, res) {
+  const { id } = req.params;
+  const { confirm } = req.body;
+
+  if (!confirm) {
+    return res.json({ status: 'error', message: 'Confirmation required' });
+  }
+
+  connection.execute(
+    'SELECT role FROM users WHERE id = ?',
+    [id],
+    function(err, users) {
+      if (err || users.length === 0) {
+        return res.json({ status: 'error', message: 'User not found' });
+      }
+
+      const targetRole = users[0].role;
+      const currentUserRole = req.user.role;
+
+      // ตรวจสอบสิทธิ์การลบ
+      if (targetRole === 'superuser') {
+        return res.json({ status: 'error', message: 'Cannot delete superuser' });
+      }
+
+      if (targetRole === 'admin' && currentUserRole !== 'superuser') {
+        return res.json({ status: 'error', message: 'Only superuser can delete admin' });
+      }
+
+      if (targetRole === 'user' && !['admin', 'superuser'].includes(currentUserRole)) {
+        return res.json({ status: 'error', message: 'Insufficient permissions' });
+      }
+
+      connection.execute(
+        'DELETE FROM users WHERE id = ?',
+        [id],
+        function(err, result) {
+          if (err) {
+            return res.json({ status: 'error', message: err.message });
+          }
+
+          // บันทึกการลบผู้ใช้
+          const now = new Date();
+          connection.execute(
+            'INSERT INTO user_logs (user_id, action, role, timestamp) VALUES (?, ?, ?, ?)',
+            [req.user.id, `delete user ${id} with role ${targetRole}`, currentUserRole, now],
+            function(logErr) {
+              if (logErr) console.error('Log error:', logErr);
+            }
+          );
+
+          res.json({ status: 'ok', message: 'User deleted successfully' });
+        }
+      );
+    }
+  );
+});
+
+// เอ็นดพอยต์ดึงสถานะออนไลน์ของผู้ใช้ (สำหรับ admin และ superuser)
+app.get('/user-status', authorize(['admin', 'superuser']), (req, res) => {
+  /*
+  SQL แบบง่าย:
+  - ดึงผู้ใช้ทั้งหมด
+  - LEFT JOIN กับ (ล็อกอินล่าสุด)
+  - LEFT JOIN กับ (ล็อกเอาต์ล่าสุด)
+  - ถ้า login timestamp > logout timestamp => online = true
+  */
+
+  const sql = `
+    SELECT 
+      u.id, u.firstname, u.lastname, u.email, u.role,
+      MAX(CASE WHEN ul.action = 'login' THEN ul.timestamp ELSE NULL END) AS last_login,
+      MAX(CASE WHEN ul.action = 'logout' THEN ul.timestamp ELSE NULL END) AS last_logout
+    FROM users u
+    LEFT JOIN user_logs ul ON u.id = ul.user_id
+    GROUP BY u.id
+    ORDER BY u.firstname, u.lastname
+  `;
+
+  connection.query(sql, (err, results) => {
+    if (err) {
+      return res.status(500).json({ status: 'error', message: err.message });
+    }
+
+    // Map ผลลัพธ์เพื่อเพิ่มสถานะออนไลน์
+    const users = results.map(user => {
+      const lastLogin = user.last_login ? new Date(user.last_login) : null;
+      const lastLogout = user.last_logout ? new Date(user.last_logout) : null;
+      const online = lastLogin && (!lastLogout || lastLogin > lastLogout);
+      return {
+        id: user.id,
+        firstname: user.firstname,
+        lastname: user.lastname,
+        email: user.email,
+        role: user.role,
+        online
+      };
+    });
+
+    res.json({ status: 'ok', users });
+  });
+});
+
+
 app.listen(3333, function () {
   console.log('CORS-enabled web server listening on port 3333')
 })
