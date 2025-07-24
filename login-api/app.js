@@ -8,6 +8,9 @@ const bcrypt = require('bcrypt');
 const saltRounds = 10;
 const jwt = require('jsonwebtoken');
 const secret = 'SECRET-REAL-NO-FAKE'
+const emailRegex = /^[a-zA-Z0-9._%+-]+@(gmail\.com|hotmail\.com|outlook\.com|yahoo\.com|rmutr\.ac\.th)$/;
+const nameRegex = /^[A-Za-zก-๙0-9]+$/;
+const MAX_NAME_LENGTH = 50;
 
 app.use(cors())
 
@@ -17,17 +20,29 @@ const connection = mysql.createConnection({
   database: 'mydb',
 });
 
-
 app.post('/register', jsonParser, function (req, res, next) {
   const { email, passwords, firstname, lastname } = req.body;
 
-  bcrypt.hash(passwords, saltRounds, function(err, hash) {
+  // Validation
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ status: 'error', message: 'Invalid email format' });
+  }
+
+  if (!nameRegex.test(firstname) || firstname.length > MAX_NAME_LENGTH) {
+    return res.status(400).json({ status: 'error', message: 'Invalid firstname (letters only, max 50)' });
+  }
+
+  if (!nameRegex.test(lastname) || lastname.length > MAX_NAME_LENGTH) {
+    return res.status(400).json({ status: 'error', message: 'Invalid lastname (letters only, max 50)' });
+  }
+
+  bcrypt.hash(passwords, saltRounds, function (err, hash) {
     if (err) {
       return res.json({ status: 'error', message: err.message });
     }
 
     const createdAt = new Date();
-    const defaultRole = 'user'; // กำหนด role อัตโนมัติ
+    const defaultRole = 'user';
 
     connection.execute(
       'INSERT INTO users (email, passwords, firstname, lastname, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
@@ -42,40 +57,64 @@ app.post('/register', jsonParser, function (req, res, next) {
   });
 });
 
+// app.post('/register', jsonParser, function (req, res, next) {
+//   const { email, passwords, firstname, lastname } = req.body;
+
+//   bcrypt.hash(passwords, saltRounds, function(err, hash) {
+//     if (err) {
+//       return res.json({ status: 'error', message: err.message });
+//     }
+
+//     const createdAt = new Date();
+//     const defaultRole = 'user'; // กำหนด role อัตโนมัติ
+
+//     connection.execute(
+//       'INSERT INTO users (email, passwords, firstname, lastname, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+//       [email, hash, firstname, lastname, defaultRole, createdAt],
+//       function (err, results, fields) {
+//         if (err) {
+//           return res.json({ status: 'error', message: err.message });
+//         }
+//         res.json({ status: 'ok' });
+//       }
+//     );
+//   });
+// });
 
 app.post('/login', jsonParser, function (req, res, next) {
+  const { email, passwords } = req.body;
+
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ status: 'error', message: 'Invalid email format' });
+  }
+
   connection.execute(
     'SELECT * FROM users WHERE email=?',
-    [req.body.email],
+    [email],
     function (err, users, fields) {
       if (err) {
-        res.json({ status: 'error', message: err });
-        return;
+        return res.json({ status: 'error', message: err });
       }
-      if (users.length == 0) {
-        res.json({ status: 'error', message: 'NO USER MA FAQ' });
-        return;
+      if (users.length === 0) {
+        return res.json({ status: 'error', message: 'NO USER MA FAQ' });
       }
 
-      bcrypt.compare(req.body.passwords, users[0].passwords, function(err, isLogin) {
+      bcrypt.compare(passwords, users[0].passwords, function (err, isLogin) {
         if (isLogin) {
           const user = users[0];
           const token = jwt.sign({ email: user.email }, secret, { expiresIn: '8h' });
 
-          // ✅ เพิ่ม log การเข้าใช้งาน
           const now = new Date();
           connection.execute(
             'INSERT INTO user_logs (user_id, action, role, timestamp) VALUES (?, ?, ?, ?)',
             [user.id, 'login', user.role, now],
             function (logErr, logResult) {
               if (logErr) {
-                console.error('Log error:', logErr); // ไม่ส่งให้ user เห็น แต่ log เก็บไว้
+                console.error('Log error:', logErr);
               }
-              // ตอบกลับหลังจากบันทึก log
               res.json({ status: 'ok', message: 'Login LesGO', token });
             }
           );
-
         } else {
           res.json({ status: 'ITS FAKE', message: 'Login FAKE' });
         }
@@ -83,6 +122,47 @@ app.post('/login', jsonParser, function (req, res, next) {
     }
   );
 });
+
+// app.post('/login', jsonParser, function (req, res, next) {
+//   connection.execute(
+//     'SELECT * FROM users WHERE email=?',
+//     [req.body.email],
+//     function (err, users, fields) {
+//       if (err) {
+//         res.json({ status: 'error', message: err });
+//         return;
+//       }
+//       if (users.length == 0) {
+//         res.json({ status: 'error', message: 'NO USER MA FAQ' });
+//         return;
+//       }
+
+//       bcrypt.compare(req.body.passwords, users[0].passwords, function(err, isLogin) {
+//         if (isLogin) {
+//           const user = users[0];
+//           const token = jwt.sign({ email: user.email }, secret, { expiresIn: '8h' });
+
+//           // ✅ เพิ่ม log การเข้าใช้งาน
+//           const now = new Date();
+//           connection.execute(
+//             'INSERT INTO user_logs (user_id, action, role, timestamp) VALUES (?, ?, ?, ?)',
+//             [user.id, 'login', user.role, now],
+//             function (logErr, logResult) {
+//               if (logErr) {
+//                 console.error('Log error:', logErr); // ไม่ส่งให้ user เห็น แต่ log เก็บไว้
+//               }
+//               // ตอบกลับหลังจากบันทึก log
+//               res.json({ status: 'ok', message: 'Login LesGO', token });
+//             }
+//           );
+
+//         } else {
+//           res.json({ status: 'ITS FAKE', message: 'Login FAKE' });
+//         }
+//       });
+//     }
+//   );
+// });
 
 app.post('/logout', jsonParser, function (req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -149,7 +229,7 @@ app.get('/user-logs', jsonParser, function (req, res, next) {
     return res.status(401).json({ 
       status: 'error', 
       message: 'Unauthorized',
-      redirect: '/login' // เพิ่ม property redirect
+      redirect: '/login'
     });
   }
 
@@ -158,7 +238,7 @@ app.get('/user-logs', jsonParser, function (req, res, next) {
       return res.status(403).json({ 
         status: 'error', 
         message: 'Invalid token',
-        redirect: '/login' // เพิ่ม property redirect
+        redirect: '/login'
       });
     }
 
@@ -170,7 +250,7 @@ app.get('/user-logs', jsonParser, function (req, res, next) {
           return res.status(403).json({ 
             status: 'error', 
             message: 'Access denied',
-            redirect: '/login' // เพิ่ม property redirect
+            redirect: '/login'
           });
         }
 
@@ -179,23 +259,71 @@ app.get('/user-logs', jsonParser, function (req, res, next) {
           return res.status(403).json({ 
             status: 'error', 
             message: 'Admin or Superuser access required',
-            redirect: '/login' // เพิ่ม property redirect
+            redirect: '/login'
           });
         }
 
-        connection.execute(
-          `SELECT ul.*, u.firstname, u.lastname, u.email 
-           FROM user_logs ul
-           JOIN users u ON ul.user_id = u.id
-           ORDER BY ul.timestamp DESC
-           LIMIT 100`,
-          function (err, logs, fields) {
-            if (err) {
-              return res.json({ status: 'error', message: err.message });
-            }
-            res.json({ status: 'ok', logs });
+        // รับพารามิเตอร์การค้นหาจาก query string
+        const { id, name, email, action, startDate, endDate } = req.query;
+        
+        let conditions = [];
+        let params = [];
+
+        // เงื่อนไขการค้นหาด้วย User ID
+        if (id && !isNaN(id)) {
+          conditions.push('ul.user_id = ?');
+          params.push(parseInt(id));
+        }
+
+        // เงื่อนไขการค้นหาด้วยชื่อ
+        if (name) {
+          conditions.push('(u.firstname LIKE ? OR u.lastname LIKE ?)');
+          params.push(`%${name}%`, `%${name}%`);
+        }
+
+        // เงื่อนไขการค้นหาด้วยอีเมล
+        if (email) {
+          conditions.push('u.email LIKE ?');
+          params.push(`%${email}%`);
+        }
+
+        // เงื่อนไขการค้นหาด้วยการกระทำ (action)
+        if (action) {
+          conditions.push('ul.action = ?');
+          params.push(action);
+        }
+
+        // เงื่อนไขการค้นหาด้วยช่วงเวลา
+        if (startDate) {
+          conditions.push('ul.timestamp >= ?');
+          params.push(new Date(startDate));
+        }
+
+        if (endDate) {
+          conditions.push('ul.timestamp <= ?');
+          params.push(new Date(endDate));
+        }
+
+        // สร้าง query สุดท้าย
+        let query = `
+          SELECT ul.*, u.firstname, u.lastname, u.email, u.role 
+          FROM user_logs ul
+          JOIN users u ON ul.user_id = u.id
+        `;
+
+        if (conditions.length > 0) {
+          query += ' WHERE ' + conditions.join(' AND ');
+        }
+
+        query += ' ORDER BY ul.timestamp DESC LIMIT 100';
+
+        connection.execute(query, params, function (err, logs, fields) {
+          if (err) {
+            console.error('Database error:', err);
+            return res.json({ status: 'error', message: err.message });
           }
-        );
+          res.json({ status: 'ok', logs });
+        });
       }
     );
   });
@@ -253,8 +381,15 @@ app.put('/users/:id/role', authorize(['superuser']), jsonParser, function(req, r
   const { id } = req.params;
   const { role } = req.body;
 
-  if (!['admin', 'user'].includes(role)) {
-    return res.json({ status: 'error', message: 'Invalid role' });
+  // ตรวจสอบ ID
+  if (!/^\d+$/.test(id)) {
+    return res.status(400).json({ status: 'error', message: 'Invalid user ID' });
+  }
+
+  // ตรวจสอบ Role
+  const allowedRoles = ['admin', 'user'];
+  if (!role || !allowedRoles.includes(role)) {
+    return res.status(400).json({ status: 'error', message: 'Invalid role' });
   }
 
   connection.execute(
@@ -352,52 +487,6 @@ app.delete('/users/:id', authorize(['admin', 'superuser']), jsonParser, function
     }
   );
 });
-
-// เอ็นดพอยต์ดึงสถานะออนไลน์ของผู้ใช้ (สำหรับ admin และ superuser)
-app.get('/user-status', authorize(['admin', 'superuser']), (req, res) => {
-  /*
-  SQL แบบง่าย:
-  - ดึงผู้ใช้ทั้งหมด
-  - LEFT JOIN กับ (ล็อกอินล่าสุด)
-  - LEFT JOIN กับ (ล็อกเอาต์ล่าสุด)
-  - ถ้า login timestamp > logout timestamp => online = true
-  */
-
-  const sql = `
-    SELECT 
-      u.id, u.firstname, u.lastname, u.email, u.role,
-      MAX(CASE WHEN ul.action = 'login' THEN ul.timestamp ELSE NULL END) AS last_login,
-      MAX(CASE WHEN ul.action = 'logout' THEN ul.timestamp ELSE NULL END) AS last_logout
-    FROM users u
-    LEFT JOIN user_logs ul ON u.id = ul.user_id
-    GROUP BY u.id
-    ORDER BY u.firstname, u.lastname
-  `;
-
-  connection.query(sql, (err, results) => {
-    if (err) {
-      return res.status(500).json({ status: 'error', message: err.message });
-    }
-
-    // Map ผลลัพธ์เพื่อเพิ่มสถานะออนไลน์
-    const users = results.map(user => {
-      const lastLogin = user.last_login ? new Date(user.last_login) : null;
-      const lastLogout = user.last_logout ? new Date(user.last_logout) : null;
-      const online = lastLogin && (!lastLogout || lastLogin > lastLogout);
-      return {
-        id: user.id,
-        firstname: user.firstname,
-        lastname: user.lastname,
-        email: user.email,
-        role: user.role,
-        online
-      };
-    });
-
-    res.json({ status: 'ok', users });
-  });
-});
-
 
 app.listen(3333, function () {
   console.log('CORS-enabled web server listening on port 3333')

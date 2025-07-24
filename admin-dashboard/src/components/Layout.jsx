@@ -68,12 +68,6 @@ const Layout = () => {
                 User Management
               </Link>
 
-              <Link
-                to="/user-status"
-                className="text-gray-600 hover:text-black text-sm font-medium"
-              >
-                User Online Status
-              </Link>
             </div>
 
             {/* Logout Button */}

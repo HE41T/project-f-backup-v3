@@ -4,7 +4,6 @@ import Layout from './components/Layout'; // ✅ import Layout
 import Dashboard from './pages/Dashboard';
 import LoginPage from './pages/LoginPage';
 import UserManagement from './pages/UserManagement';
-import UserStatus from './pages/UserStatus'; // import component ใหม่
 
 function App() {
   return (
@@ -17,7 +16,6 @@ function App() {
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} /> {/* ✅ หน้า Dashboard */}
             <Route path="/user-management" element={<UserManagement />} />
-            <Route path="/user-status" element={<UserStatus />} />  {/* เพิ่มบรรทัดนี้ */}
           </Route>
         </Route>
       </Routes>
