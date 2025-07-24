@@ -11,8 +11,8 @@ const ImageDisplay = ({
 }) => {
   // ฟังก์ชันกำหนดข้อความแสดงสถานะ
   const getStatusText = () => {
-    if (showOriginal) return 'รูปต้นฉบับ';
-    if (!processedFile) return 'รูปหลังปรับขนาด';
+    if (showOriginal) return 'ต้นฉบับ';
+    if (!processedFile) return 'หลังปรับขนาด';
     return 'รูปหลังปรับปรุง';
   };
 
@@ -39,7 +39,13 @@ const ImageDisplay = ({
   };
 
   return (
-    <div className="col-span-3 row-span-5 p-4 flex flex-col bg-[#171719] border-r border-[#24262B]/50">
+    <div class="
+      md:static md:inset-auto  <!-- ยกเลิก fixed และ inset-0 ใน md -->
+      fixed inset-0            <!-- ค่า default สำหรับ mobile -->
+      col-span-4 md:col-span-3 
+      row-span-5 p-4 flex flex-col 
+      bg-[#171719] border-r border-[#24262B]/50
+    ">
       <div className="flex justify-center">
         <label
           htmlFor="image-upload"
@@ -64,7 +70,7 @@ const ImageDisplay = ({
               {getStatusText()}
             </h3>
             <div className="font-bold text-[#e06c75] text-medium">
-              หากภาพมีปัญหาให้อัพโหลดใหม่ / กดปรับขนาด
+              ภาพมีปัญหาให้กดปรับขนาด
             </div>
           </div>
           

@@ -40,6 +40,10 @@ function FileUploader() {
   const [processingType, setProcessingType] = useState(null);
   const [currentImageUrl, setCurrentImageUrl] = useState(null);
   const [alertMessage, setAlertMessage] = useState('');
+  const [showOptions, setShowOptions] = useState(false);
+  const [showDownloadPopup, setShowDownloadPopup] = useState(false);
+
+
 
   const [processingOptions, setProcessingOptions] = useState({
     resize: true,
@@ -376,7 +380,24 @@ const handleDownload = async () => {
       currentImageUrl={currentImageUrl} // ส่ง currentImageUrl ไป
     />
 
-      <div className="col-start-4 col-span-2 row-span-5 overflow-y-auto scroll-smooth flex flex-col bg-[#292C31] text-gray-300">
+      <button
+        className={`md:hidden fixed top-40 z-50 bg-[#00969D] text-white px-4 py-2 rounded shadow-lg transition-all duration-300 ${
+          showOptions ? 'left-4' : 'right-4'
+        }`}
+        onClick={() => setShowOptions(!showOptions)}
+      >
+        {showOptions ? 'ปิดตัวเลือก' : 'เปิดตัวเลือก'}
+      </button>
+
+      <div
+        className={`
+          fixed top-0 right-0 h-full w-64 bg-[#292C31] text-gray-300 overflow-y-auto z-40
+          p-4 transition-transform duration-300 ease-in-out
+          ${showOptions ? 'translate-x-0' : 'translate-x-full'}
+          md:static md:translate-x-0 md:w-full md:col-start-4 md:col-span-2 md:row-span-5 md:p-3
+          flex flex-col
+        `}
+      >
         <div className="bg-[#24262b] p-3 mb-4">
           <h2 className="text-xl font-semibold text-[#00969D]">ตัวเลือก ปรับขนาด</h2>
         </div>
@@ -433,9 +454,91 @@ const handleDownload = async () => {
           aspectRatio={aspectRatio}
           toggleShowOriginal={toggleShowOriginal}
           currentImageUrl={currentImageUrl}
+          onOpenPopup={() => setShowDownloadPopup(true)}
         />
         </div>
       </div>
+      
+      {showDownloadPopup && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowDownloadPopup(false)}
+        >
+          <div 
+            className="bg-[#1E1F23] rounded-lg py-6 px-4 w-full max-w-7xl border border-[#292c31] shadow-xl relative overflow-y-auto max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button 
+              onClick={() => setShowDownloadPopup(false)}
+              className="absolute top-3 right-3 text-gray-400 hover:text-white p-1 rounded-full hover:bg-[#383c43]"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
+            </button>
+
+            <div className="grid grid-cols-1 lg:grid-cols-5 h-full gap-6">
+              <div className="lg:col-span-4 w-full flex items-center justify-center">
+                {currentImageUrl && (
+                  <img 
+                    src={currentImageUrl} 
+                    alt="preview"
+                    className="max-h-[50vh] sm:max-h-[65vh] lg:max-h-[85vh] w-auto rounded border border-[#292c31] object-contain"
+                  />
+                )}
+              </div>
+
+              <div className="lg:col-span-1 w-full flex flex-col">
+                <h3 className="text-lg font-medium text-white mb-4">ตัวเลือก Download</h3>
+
+                <select
+                  value={downloadFormat}
+                  onChange={(e) => setDownloadFormat(e.target.value)}
+                  className="w-full py-3 rounded-lg bg-[#383c43] border border-[#292c31] text-white mb-4 "
+                >
+                  <option value="original">นามสกุลต้นฉบับ</option>
+                  <option value="image/jpeg">JPEG (.jpg)</option>
+                  <option value="image/png">PNG (.png)</option>
+                  <option value="image/webp">WEBP (.webp)</option>
+                </select>
+
+                <button
+                  onClick={handleDownload}
+                  disabled={isDownloading}
+                  className={`w-full py-3 rounded-lg font-medium mb-4 ${
+                    isDownloading 
+                      ? 'bg-[#24262B]/50 text-gray-500 cursor-not-allowed' 
+                      : 'bg-[#00969D] text-white hover:bg-[#007980]'
+                  }`}
+                >
+                  {isDownloading ? 'Downloading...' : 'Download'}
+                </button>
+
+                <div className="p-3 bg-[#24262B] border border-[#24262B] text-gray-400 text-sm rounded-lg">
+                  <p>
+                    <span className="font-medium text-gray-300">ขนาด :</span> {width} × {height} px<br />
+                    <span className="font-medium text-gray-300">อัตราส่วนภาพ :</span> {aspectRatio ? aspectRatio.toFixed(2) : 'N/A'}
+
+                    {sharpness !== 0 && (
+                      <>
+                        <br /><span className="font-medium text-gray-300">ระดับความคมชัด :</span> {sharpness.toFixed(1)}
+                      </>
+                    )}
+
+                    {noiseReduction !== 0 && (
+                      <>
+                        <br /><span className="font-medium text-gray-300">ระดับการลดนอยซ์ :</span> {noiseReduction.toFixed(1)}
+                      </>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
