@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import LoginPage from './pages/LoginPage';
 import UserManagement from './pages/UserManagement';
 import RegisterForm from './components/RegisterForm';
+import ResetPassword from './components/ResetPassword';
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
             </div>
           } 
         />
+        <Route path="/reset-password" element={<ResetPassword />} />
         
         {/* Protected routes with Layout */}
         <Route element={<PrivateRoute allowedRoles={['admin', 'superuser']} />}>

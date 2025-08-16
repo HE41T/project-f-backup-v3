@@ -65,6 +65,14 @@ const handleLogout = async (event) => {
             </div>
 
             {/* Logout Button */}
+            <div className="flex items-center ml-auto mr-10 space-x-6">
+              <Link
+                to="/"
+                className="text-gray-600 hover:text-black text-sm font-medium"
+              >
+                Resize App
+              </Link>
+            </div>
             <div className="flex items-center space-x-4">
               {logoutError && (
                 <div className="flex items-center text-red-600 text-sm">

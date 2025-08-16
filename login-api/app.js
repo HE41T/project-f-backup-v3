@@ -115,7 +115,9 @@ app.post('/login', jsonParser, (req, res) => {
             req.session.user = {
               id: user.id,
               email: user.email,
-              role: user.role
+              role: user.role,
+              firstname: user.firstname,   // เพิ่ม
+              lastname: user.lastname      // เพิ่ม
             };
 
             connection.execute(
@@ -166,6 +168,66 @@ app.post('/logout', function (req, res) {
 
       req.session.destroy(() => {
         res.json({ status: 'ok', message: 'Logout successful' });
+      });
+    }
+  );
+});
+
+app.post('/reset-password', jsonParser, (req, res) => {
+  if (!req.session || !req.session.user) {
+    return res.status(401).json({ status: 'unauthorized', message: 'Please login' });
+  }
+
+  const { currentPassword, newPassword } = req.body;
+  const userId = req.session.user.id;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ status: 'error', message: 'Missing required fields' });
+  }
+
+  // 1. ดึงรหัสผ่านเดิมจากฐานข้อมูล
+  connection.execute(
+    'SELECT passwords FROM users WHERE id = ?',
+    [userId],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({ status: 'error', message: 'Database error' });
+      }
+      if (results.length === 0) {
+        return res.status(404).json({ status: 'error', message: 'User not found' });
+      }
+
+      const hashedPassword = results[0].passwords;
+
+      // 2. ตรวจสอบรหัสผ่านเดิม
+      bcrypt.compare(currentPassword, hashedPassword, (err, match) => {
+        if (err) {
+          return res.status(500).json({ status: 'error', message: 'Password comparison error' });
+        }
+
+        if (!match) {
+          return res.status(400).json({ status: 'error', message: 'Current password is incorrect' });
+        }
+
+        // 3. เข้ารหัสรหัสผ่านใหม่
+        bcrypt.hash(newPassword, saltRounds, (err, newHashedPassword) => {
+          if (err) {
+            return res.status(500).json({ status: 'error', message: 'Hashing failed' });
+          }
+
+          // 4. อัปเดตรหัสผ่านใหม่ในฐานข้อมูล
+          connection.execute(
+            'UPDATE users SET passwords = ? WHERE id = ?',
+            [newHashedPassword, userId],
+            (err2) => {
+              if (err2) {
+                return res.status(500).json({ status: 'error', message: 'Failed to update password' });
+              }
+
+              return res.status(200).json({ status: 'ok', message: 'Password updated successfully' });
+            }
+          );
+        });
       });
     }
   );

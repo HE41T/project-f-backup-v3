@@ -28,6 +28,34 @@ const ProcessingOptions = ({
   const [isEnhancePopupOpen, setIsEnhancePopupOpen] = useState(false);
   const [img] = useState(new Image());
 
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // ✅ ตรวจสอบ session login และดึง user
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const response = await fetch('http://localhost:3333/auth/check', {
+          credentials: 'include',
+        });
+        const data = await response.json();
+
+        if (response.ok && data.user) {
+          setUser(data.user);
+        } else {
+          setUser(null);
+        }
+      } catch (err) {
+        console.error('Error checking auth:', err);
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkSession();
+  }, []);
+
   useEffect(() => {
     return () => {
       if (img.src) {
@@ -35,6 +63,20 @@ const ProcessingOptions = ({
       }
     };
   }, [img]);
+
+  const allowedRoles = ['user', 'admin', 'superuser'];
+
+  if (loading) {
+    return <div className="text-gray-300 px-4 py-2">กำลังโหลดข้อมูลผู้ใช้...</div>;
+  }
+
+  if (!user || !allowedRoles.includes(user.role)) {
+    return (
+      <div className="font-bold text-[#e06c75] text-lg px-4 py-2 mb-4">
+        Login เพื่อใช้ฟีเจอร์ปรับปรุงภาพ
+      </div>
+    );
+  }
 
   return (
     <div className="mb-3 px-4">
@@ -73,12 +115,11 @@ const ProcessingOptions = ({
       {/* Sharpness Popup */}
       {isPopupOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-        onClick={() => setIsPopupOpen(false)} // ปิดเมื่อกดนอกกล่อง
+          onClick={() => setIsPopupOpen(false)}
         >
           <div className="relative bg-[#24262B] p-6 rounded-lg max-w-md w-full border border-[#36383D]"
-          onClick={(e) => e.stopPropagation()} // ป้องกันการปิดถ้าคลิกในกล่อง
+            onClick={(e) => e.stopPropagation()}
           >
-            {/* ปุ่มปิดมุมขวาบน */}
             <button
               onClick={() => setIsPopupOpen(false)}
               className="absolute top-3 right-3 text-gray-400 hover:text-white text-lg"
@@ -89,7 +130,7 @@ const ProcessingOptions = ({
             <h3 className="text-lg font-medium text-gray-200 mb-4">
               ตั้งค่าระดับความคมชัด
             </h3>
-            
+
             <div className="mb-4">
               <label className="block mb-3 font-medium text-gray-200">
                 ระดับความคมชัด : <span className="text-[#00969D]">{sharpness.toFixed(1)}</span>
@@ -99,7 +140,7 @@ const ProcessingOptions = ({
                   </span>
                 )}
               </label>
-              
+
               <input
                 type="range"
                 min={SHARPNESS_CONFIG.min}
@@ -115,14 +156,14 @@ const ProcessingOptions = ({
                   [&::-webkit-slider-thumb]:shadow-md
                   disabled:opacity-50 disabled:cursor-not-allowed"
               />
-              
+
               <div className="flex justify-between text-xs text-gray-500 mt-2 px-1">
                 <span className={`${sharpness === SHARPNESS_CONFIG.min ? 'font-bold text-[#00969D]' : ''}`}>เบลอ</span>
                 <span className={`${sharpness === 0 ? 'font-bold text-[#00969D]' : ''}`}>ปกติ</span>
                 <span className={`${sharpness === SHARPNESS_CONFIG.max ? 'font-bold text-[#00969D]' : ''}`}>คมชัด</span>
               </div>
             </div>
-            
+
             <div className="flex justify-end space-x-3">
               <button
                 onClick={() => {
@@ -154,17 +195,16 @@ const ProcessingOptions = ({
 
       {/* Enhance Popup */}
       {isEnhancePopupOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={() => setIsEnhancePopupOpen(false)} // Fixed: Changed to setIsEnhancePopupOpen
+          onClick={() => setIsEnhancePopupOpen(false)}
         >
-          <div 
+          <div
             className="relative bg-[#24262B] p-6 rounded-lg max-w-md w-full border border-[#36383D]"
-            onClick={(e) => e.stopPropagation()} // Fixed: Changed to stopPropagation
+            onClick={(e) => e.stopPropagation()}
           >
-            {/* ปุ่มปิดมุมขวาบน */}
             <button
-              onClick={() => setIsEnhancePopupOpen(false)} // Fixed: Changed to setIsEnhancePopupOpen
+              onClick={() => setIsEnhancePopupOpen(false)}
               className="absolute top-3 right-3 text-gray-400 hover:text-white text-lg"
               title="ปิด"
             >
@@ -179,12 +219,12 @@ const ProcessingOptions = ({
                 ระดับการลด Noise: <span className="text-[#00A169]">{noiseReduction.toFixed(1)}</span>
                 {noiseReduction > 0 && (
                   <span className="ml-2 text-sm text-[#00A169]">
-                    {noiseReduction <= 3 ? 'ลดน้อย' : 
-                    noiseReduction <= 5 ? 'ลดปานกลาง' : 'ลดมาก'}
+                    {noiseReduction <= 3 ? 'ลดน้อย' :
+                      noiseReduction <= 5 ? 'ลดปานกลาง' : 'ลดมาก'}
                   </span>
                 )}
               </label>
-              
+
               <input
                 type="range"
                 min={NOISE_REDUCTION_CONFIG.min}
@@ -200,7 +240,7 @@ const ProcessingOptions = ({
                   [&::-webkit-slider-thumb]:shadow-md
                   disabled:opacity-50 disabled:cursor-not-allowed"
               />
-              
+
               <div className="flex justify-between text-xs text-gray-500 mt-2 px-1">
                 <span className={`${noiseReduction === NOISE_REDUCTION_CONFIG.min ? 'font-bold text-[#00A169]' : ''}`}>ไม่ลด</span>
                 <span className={`${noiseReduction === 3 ? 'font-bold text-[#00A169]' : ''}`}>ปานกลาง</span>
@@ -241,6 +281,7 @@ const ProcessingOptions = ({
 };
 
 export default ProcessingOptions;
+
 
 
 
